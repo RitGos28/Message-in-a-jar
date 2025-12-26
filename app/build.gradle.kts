@@ -14,7 +14,7 @@ android {
         applicationId = "com.ritwikg.messageinajar"
         minSdk = 24
         targetSdk = 36
-        versionCode = 4
+        versionCode = 6
         versionName = "1.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
