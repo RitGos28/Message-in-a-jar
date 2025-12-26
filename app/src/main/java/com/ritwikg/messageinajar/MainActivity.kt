@@ -37,6 +37,10 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import android.app.AlarmManager
+import android.app.PendingIntent
+import android.content.Intent
+import kotlinx.coroutines.delay
 
 // 1. Create a DataStore instance (defined at top level so it's a singleton)
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
@@ -83,7 +87,7 @@ class MainActivity : ComponentActivity() {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     JarScreen(
                         modifier = Modifier.padding(innerPadding),
-                        onJarUnlocked = { showTestNotification() }
+                        onJarUnlocked = {}
                     )
                 }
             }
@@ -151,23 +155,12 @@ fun JarScreen(
     // UI-only state for a revealed (non-persistent) message
     var revealedMessage by remember { mutableStateOf<String?>(null) }
     var lockSeconds by remember { mutableStateOf("10") } // default
-    var currentTime by remember { mutableStateOf(System.currentTimeMillis()) }
-    var lastCheckedTime by remember { mutableStateOf(0L) }
+    var uiNow by remember { mutableStateOf(System.currentTimeMillis()) }
 
-    LaunchedEffect(unlockTime) {
+    LaunchedEffect(Unit) {
         while (true) {
-            currentTime = System.currentTimeMillis()
-
-            if (
-                unlockTime > 0 &&
-                lastCheckedTime < unlockTime &&
-                currentTime >= unlockTime
-            ) {
-                onJarUnlocked()
-            }
-
-            lastCheckedTime = currentTime
-            kotlinx.coroutines.delay(1000)
+            uiNow = System.currentTimeMillis()
+            delay(1000)
         }
     }
 
@@ -207,25 +200,52 @@ fun JarScreen(
     if (savedMessage.isEmpty()) {
         Button(
             onClick = {
-                // 4. Save to DataStore inside a Coroutine
-                scope.launch {
-                    context.dataStore.edit { settings ->
+                try{
+                    // 4. Save to DataStore inside a Coroutine
+                    scope.launch {
                         val seconds = lockSeconds.toLongOrNull() ?: 0L
                         val unlockTime = System.currentTimeMillis() + (seconds * 1000)
 
-                        settings[MESSAGE_KEY] = messageInput
-                        settings[UNLOCK_TIME_KEY] = unlockTime
+                        // 1️⃣ Save message + unlock time
+                        context.dataStore.edit { settings ->
+                            settings[MESSAGE_KEY] = messageInput
+                            settings[UNLOCK_TIME_KEY] = unlockTime
+                        }
 
+                        // 2️⃣ Schedule OS-level alarm (THIS IS THE NEW PART)
+                        val alarmManager =
+                            context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+
+                        val intent = Intent(context, JarAlarmReceiver::class.java)
+
+                        val pendingIntent = PendingIntent.getBroadcast(
+                            context,
+                            0,
+                            intent,
+                            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                        )
+
+                        alarmManager.set(
+                            AlarmManager.RTC_WAKEUP,
+                            unlockTime,
+                            pendingIntent
+                        )
+
+                        // 3️⃣ UX feedback
+                        Toast.makeText(context, "Message sealed in the jar!", Toast.LENGTH_SHORT).show()
                     }
-                    Toast.makeText(context, "Message sealed in the jar!", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    Toast.makeText(context, "Alarm setup failed", Toast.LENGTH_LONG).show()
                 }
+
             }
         ) {
             Text("Seal the jar")
         }
     }
 
-        val now = currentTime
+        val now = uiNow
 
         if (savedMessage.isNotEmpty() && now < unlockTime) {
             val remaining = (unlockTime - now) / 1000
