@@ -1,5 +1,7 @@
 package com.ritwikg.messageinajar
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
 import android.os.Bundle
 import android.widget.Toast
@@ -29,6 +31,12 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.ritwikg.messageinajar.ui.theme.MessageInAJarTheme
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import android.os.Build
+import android.content.pm.PackageManager
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 
 // 1. Create a DataStore instance (defined at top level so it's a singleton)
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
@@ -36,19 +44,88 @@ val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "se
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+
+        // 1️⃣ Request notification permission (Android 13+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    android.Manifest.permission.POST_NOTIFICATIONS
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                ActivityCompat.requestPermissions(
+                    this,
+                    arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
+                    1001
+                )
+            }
+        }
+
+        // 2️⃣ Create notification channel (Android 8+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                "jar_channel",
+                "Jar Notifications",
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply {
+                description = "Notifies when the jar unlocks"
+            }
+
+
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(channel)
+        }
+
         enableEdgeToEdge()
+
         setContent {
             MessageInAJarTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    JarScreen(modifier = Modifier.padding(innerPadding))
+                    JarScreen(
+                        modifier = Modifier.padding(innerPadding),
+                        onJarUnlocked = { showTestNotification() }
+                    )
                 }
             }
         }
+
+
+
     }
+    private fun showTestNotification() {
+        val notification = NotificationCompat.Builder(this, "jar_channel")
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle("Jar unlocked 🫙")
+            .setContentText("Your message is ready to be revealed.")
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .build()
+
+        with(NotificationManagerCompat.from(this)) {
+            notify(1, notification)
+        }
+    }
+
+}
+
+
+fun sendJarNotification(context: Context) {
+    val notification = NotificationCompat.Builder(context, "jar_channel")
+        .setSmallIcon(R.mipmap.ic_launcher)
+        .setContentTitle("The jar is ready 🫙")
+        .setContentText("Your message can now be revealed")
+        .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+        .setAutoCancel(true)
+        .build()
+
+    NotificationManagerCompat.from(context).notify(1, notification)
 }
 
 @Composable
-fun JarScreen(modifier: Modifier = Modifier) {
+fun JarScreen(
+    modifier: Modifier = Modifier,
+    onJarUnlocked: () -> Unit
+) {
+
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -75,10 +152,21 @@ fun JarScreen(modifier: Modifier = Modifier) {
     var revealedMessage by remember { mutableStateOf<String?>(null) }
     var lockSeconds by remember { mutableStateOf("10") } // default
     var currentTime by remember { mutableStateOf(System.currentTimeMillis()) }
+    var lastCheckedTime by remember { mutableStateOf(0L) }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(unlockTime) {
         while (true) {
             currentTime = System.currentTimeMillis()
+
+            if (
+                unlockTime > 0 &&
+                lastCheckedTime < unlockTime &&
+                currentTime >= unlockTime
+            ) {
+                onJarUnlocked()
+            }
+
+            lastCheckedTime = currentTime
             kotlinx.coroutines.delay(1000)
         }
     }
