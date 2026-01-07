@@ -1,5 +1,6 @@
 package com.ritwikg.messageinajar
 
+import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
@@ -20,7 +21,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
@@ -54,12 +54,12 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(
                     this,
-                    android.Manifest.permission.POST_NOTIFICATIONS
+                    Manifest.permission.POST_NOTIFICATIONS
                 ) != PackageManager.PERMISSION_GRANTED
             ) {
                 ActivityCompat.requestPermissions(
                     this,
-                    arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
+                    arrayOf(Manifest.permission.POST_NOTIFICATIONS),
                     1001
                 )
             }
@@ -96,23 +96,42 @@ class MainActivity : ComponentActivity() {
 
 
     }
-    private fun showTestNotification() {
-        val notification = NotificationCompat.Builder(this, "jar_channel")
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
-            .setContentTitle("Jar unlocked 🫙")
-            .setContentText("Your message is ready to be revealed.")
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .build()
-
-        with(NotificationManagerCompat.from(this)) {
-            notify(1, notification)
-        }
-    }
 
 }
 
+fun notifyIfPermitted(
+    context: Context,
+    notificationId: Int,
+    notification: android.app.Notification
+) {
+    // Android 13+ needs explicit permission
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        val granted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.POST_NOTIFICATIONS
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (!granted) {
+            // Permission denied → do nothing gracefully
+            return
+        }
+    }
+
+    NotificationManagerCompat.from(context).notify(notificationId, notification)
+}
 
 fun sendJarNotification(context: Context) {
+    // Android 13+ runtime permission check
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        if (ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+    }
+
     val notification = NotificationCompat.Builder(context, "jar_channel")
         .setSmallIcon(R.mipmap.ic_launcher)
         .setContentTitle("The jar is ready 🫙")
@@ -155,7 +174,7 @@ fun JarScreen(
     // UI-only state for a revealed (non-persistent) message
     var revealedMessage by remember { mutableStateOf<String?>(null) }
     var lockSeconds by remember { mutableStateOf("10") } // default
-    var uiNow by remember { mutableStateOf(System.currentTimeMillis()) }
+    var uiNow by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -287,5 +306,3 @@ fun JarScreen(
 
     }
 }
-
-//im commiting the same thing again so that i dont get a giant gap in my github portfolio
