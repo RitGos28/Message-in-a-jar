@@ -46,6 +46,7 @@ import kotlinx.serialization.json.*
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
+import java.time.Instant
 
 @Serializable
 data class JarMessage(
@@ -203,10 +204,9 @@ fun JarScreen(
     var uiNow by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
     val today = remember(uiNow) {
-        LocalDate.ofInstant(
-            java.time.Instant.ofEpochMilli(uiNow),
-            ZoneId.systemDefault()
-        )
+        Instant.ofEpochMilli(uiNow)
+            .atZone(ZoneId.systemDefault())
+            .toLocalDate()
     }
     val unlocked = isJarUnlocked(today)
     val daysLeft = daysUntilUnlock(today)
