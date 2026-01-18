@@ -43,6 +43,9 @@ import android.content.Intent
 import kotlinx.coroutines.delay
 import kotlinx.serialization.*
 import kotlinx.serialization.json.*
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.temporal.ChronoUnit
 
 @Serializable
 data class JarMessage(
@@ -130,6 +133,28 @@ fun notifyIfPermitted(
     NotificationManagerCompat.from(context).notify(notificationId, notification)
 }
 
+fun today(): LocalDate =
+    LocalDate.now(ZoneId.systemDefault())
+
+fun unlockDateForYear(year: Int): LocalDate =
+    LocalDate.of(year, 12, 21)
+
+fun isJarUnlocked(today: LocalDate): Boolean {
+    val unlock = unlockDateForYear(today.year)
+    val lockAgain = LocalDate.of(today.year + 1, 1, 1)
+
+    return !today.isBefore(unlock) && today.isBefore(lockAgain)
+}
+
+fun daysUntilUnlock(today: LocalDate): Long {
+    val unlock = unlockDateForYear(today.year)
+
+    return if (today.isBefore(unlock))
+        ChronoUnit.DAYS.between(today, unlock)
+    else
+        0
+}
+
 fun sendJarNotification(context: Context) {
     // Android 13+ runtime permission check
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -161,6 +186,7 @@ fun JarScreen(
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var messageInput by remember { mutableStateOf("") }
 
     val MESSAGES_KEY = stringPreferencesKey("jar_messages")
 
@@ -174,12 +200,16 @@ fun JarScreen(
 
 
 
-
-
-    // UI State for the TextField
-    var messageInput by remember { mutableStateOf("") }
-    var lockSeconds by remember { mutableStateOf("10") } // default
     var uiNow by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+    val today = remember(uiNow) {
+        LocalDate.ofInstant(
+            java.time.Instant.ofEpochMilli(uiNow),
+            ZoneId.systemDefault()
+        )
+    }
+    val unlocked = isJarUnlocked(today)
+    val daysLeft = daysUntilUnlock(today)
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -211,73 +241,52 @@ fun JarScreen(
             modifier = Modifier.fillMaxWidth()
         )
 
-        TextField(
-            value = lockSeconds,
-            onValueChange = { lockSeconds = it.filter { c -> c.isDigit() } },
-            label = { Text("Lock for (seconds)") },
-            modifier = Modifier.fillMaxWidth(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-        )
-
         Spacer(modifier = Modifier.height(16.dp))
 
-        Button(
-            onClick = {
-                try{
-                    // 4. Save to DataStore inside a Coroutine
-                    scope.launch {
-                        val seconds = lockSeconds.toLongOrNull() ?: 0L
-                        val unlockTime = System.currentTimeMillis() + (seconds * 1000)
+        if (!unlocked) {
+            Button(
+                onClick = {
+                    try{
+                        // 4. Save to DataStore inside a Coroutine
+                        scope.launch {
+                            val seconds = 0L // UI removed, notification logic kept
+                            val unlockTime = System.currentTimeMillis() + (seconds * 1000)
 
-                        context.dataStore.edit { prefs ->
-                            val existing = prefs[MESSAGES_KEY]?.let {
-                                Json.decodeFromString<List<JarMessage>>(it)
-                            } ?: emptyList()
+                            context.dataStore.edit { prefs ->
+                                val existing = prefs[MESSAGES_KEY]?.let {
+                                    Json.decodeFromString<List<JarMessage>>(it)
+                                } ?: emptyList()
 
-                            val newMessage = JarMessage(
-                                createdAt = System.currentTimeMillis(),
-                                tag = "default",
-                                content = messageInput
-                            )
+                                val newMessage = JarMessage(
+                                    createdAt = System.currentTimeMillis(),
+                                    tag = "default",
+                                    content = messageInput
+                                )
 
-                            val updated = existing + newMessage
-                            prefs[MESSAGES_KEY] = Json.encodeToString(updated)
+                                val updated = existing + newMessage
+                                prefs[MESSAGES_KEY] = Json.encodeToString(updated)
+                            }
+
+                            // 3️⃣ UX feedback
+                            Toast.makeText(context, "Message sealed in the jar!", Toast.LENGTH_SHORT).show()
                         }
-
-                        // 2️⃣ Schedule OS-level alarm (THIS IS THE NEW PART)
-                        val alarmManager =
-                            context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-
-                        val intent = Intent(context, JarAlarmReceiver::class.java)
-
-                        val pendingIntent = PendingIntent.getBroadcast(
-                            context,
-                            0,
-                            intent,
-                            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                        )
-
-                        alarmManager.set(
-                            AlarmManager.RTC_WAKEUP,
-                            unlockTime,
-                            pendingIntent
-                        )
-
-                        // 3️⃣ UX feedback
-                        Toast.makeText(context, "Message sealed in the jar!", Toast.LENGTH_SHORT).show()
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                        Toast.makeText(context, "Alarm setup failed", Toast.LENGTH_LONG).show()
                     }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                    Toast.makeText(context, "Alarm setup failed", Toast.LENGTH_LONG).show()
-                }
 
+                }
+            ) {
+                Text("Seal the jar")
             }
-        ) {
-            Text("Seal the jar")
         }
 
         Spacer(modifier = Modifier.height(16.dp))
-        Text("Messages saved: ${messages.size}")
+        if (!unlocked) {
+            Text("Jar unlocks in $daysLeft days")
+        } else {
+            Text("The jar is open 🫙")
+        }
 
     }
 }
