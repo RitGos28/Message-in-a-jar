@@ -41,6 +41,16 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Intent
 import kotlinx.coroutines.delay
+import kotlinx.serialization.*
+import kotlinx.serialization.json.*
+
+@Serializable
+data class JarMessage(
+    val createdAt: Long,
+    val tag: String,
+    val content: String
+)
+
 
 // 1. Create a DataStore instance (defined at top level so it's a singleton)
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
@@ -152,18 +162,15 @@ fun JarScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    // 2. Define the key for our saved message
-    val MESSAGE_KEY = stringPreferencesKey("saved_message")
-    val UNLOCK_TIME_KEY = longPreferencesKey("unlock_time")
+    val MESSAGES_KEY = stringPreferencesKey("jar_messages")
 
 
-    // 3. Read the saved message from DataStore as a State
-    val savedMessage by context.dataStore.data
-        .map { preferences -> preferences[MESSAGE_KEY] ?: "" }
-        .collectAsState(initial = "")
-    val unlockTime by context.dataStore.data
-        .map { prefs -> prefs[UNLOCK_TIME_KEY] ?: 0L }
-        .collectAsState(initial = 0L)
+    val messages by context.dataStore.data
+        .map { prefs ->
+            val json = prefs[MESSAGES_KEY] ?: "[]"
+            Json.decodeFromString<List<JarMessage>>(json)
+        }
+        .collectAsState(initial = emptyList())
 
 
 
@@ -171,8 +178,6 @@ fun JarScreen(
 
     // UI State for the TextField
     var messageInput by remember { mutableStateOf("") }
-    // UI-only state for a revealed (non-persistent) message
-    var revealedMessage by remember { mutableStateOf<String?>(null) }
     var lockSeconds by remember { mutableStateOf("10") } // default
     var uiNow by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
@@ -216,7 +221,6 @@ fun JarScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-    if (savedMessage.isEmpty()) {
         Button(
             onClick = {
                 try{
@@ -225,10 +229,19 @@ fun JarScreen(
                         val seconds = lockSeconds.toLongOrNull() ?: 0L
                         val unlockTime = System.currentTimeMillis() + (seconds * 1000)
 
-                        // 1️⃣ Save message + unlock time
-                        context.dataStore.edit { settings ->
-                            settings[MESSAGE_KEY] = messageInput
-                            settings[UNLOCK_TIME_KEY] = unlockTime
+                        context.dataStore.edit { prefs ->
+                            val existing = prefs[MESSAGES_KEY]?.let {
+                                Json.decodeFromString<List<JarMessage>>(it)
+                            } ?: emptyList()
+
+                            val newMessage = JarMessage(
+                                createdAt = System.currentTimeMillis(),
+                                tag = "default",
+                                content = messageInput
+                            )
+
+                            val updated = existing + newMessage
+                            prefs[MESSAGES_KEY] = Json.encodeToString(updated)
                         }
 
                         // 2️⃣ Schedule OS-level alarm (THIS IS THE NEW PART)
@@ -262,47 +275,9 @@ fun JarScreen(
         ) {
             Text("Seal the jar")
         }
-    }
 
-        val now = uiNow
-
-        if (savedMessage.isNotEmpty() && now < unlockTime) {
-            val remaining = (unlockTime - now) / 1000
-            Text("Jar unlocks in $remaining seconds")
-        }
-
-
-        if (savedMessage.isNotEmpty() && now >= unlockTime) {
-
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Button(
-                onClick = {
-                    scope.launch {
-                        // 1. Move message into memory (temporary)
-                        revealedMessage = savedMessage
-
-                        // 2. DELETE message from persistence
-                        context.dataStore.edit { settings ->
-                            settings.remove(MESSAGE_KEY)
-                        }
-                    }
-                }
-            ) {
-                Text("REVEAL MESSAGE")
-            }
-        }
-
-        revealedMessage?.let {
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Text(
-                text = "Revealed message: $it",
-                style = MaterialTheme.typography.bodyMedium
-            )
-        }
+        Spacer(modifier = Modifier.height(16.dp))
+        Text("Messages saved: ${messages.size}")
 
     }
 }
